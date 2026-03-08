@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <errno.h>
 #include "gNodeB.h"
 #include "worker.h"
 
@@ -20,7 +21,8 @@ struct sockaddr_in  ue_addr;
 int32_t             amf_sockfd;
 struct sockaddr_in  amf_addr;
 
-Worker_t            worker;
+Worker_t            worker_send_paging;
+Worker_t            worker_amf_receiver;
 /*
     Biến dùng để tracking việc gNodeB có đang chạy hay không
 */
@@ -31,6 +33,7 @@ int32_t _initAMF(struct sockaddr_in* server_addr);
 
 void _sendMIB(int32_t sockfd, const struct sockaddr_in* ue_addr, uint16_t sfn);
 void _pagingItemHandler(WorkerQueueItem_t item);
+void _amfConnectionHandler(WorkerQueueItem_t item);
 
 void* _pagingReceiverThread(void* arg);
 
@@ -59,9 +62,17 @@ int32_t gNodeBStart() {
         return -1;
     }
 
-    /* Khởi tạo worker module (queue + callback) */
-    workerInit(&worker, _pagingItemHandler, NUM_WORKER_THREADS);
-    if (workerStart(&worker) != 0) {
+    /* Khởi tạo worker xử lý nhận paging */
+    workerInit(&worker_amf_receiver, _amfConnectionHandler, NUM_WORKER_THREADS);
+    if (workerStart(&worker_amf_receiver) != 0) {
+        printf("Khởi tạo worker threads thất bại\n");
+        gNodeBStop();
+        return -1;
+    }
+
+    /* Khởi tạo worker xử lý paging */
+    workerInit(&worker_send_paging, _pagingItemHandler, NUM_WORKER_THREADS);
+    if (workerStart(&worker_send_paging) != 0) {
         printf("Khởi tạo worker threads thất bại\n");
         gNodeBStop();
         return -1;
@@ -93,7 +104,7 @@ void gNodeBStop() {
     close(amf_sockfd);
     pthread_cancel(paging_thread);
     pthread_join(paging_thread, NULL);
-    workerStop(&worker);
+    workerStop(&worker_send_paging);
 }
 
 int32_t _initUE(struct sockaddr_in* ue_addr) {
@@ -124,7 +135,7 @@ int32_t _initAMF(struct sockaddr_in* server_addr) {
     server_addr->sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sockfd, (struct sockaddr*) server_addr, sizeof(*server_addr)) < 0) {
-        perror("bind");
+        perror("bind AMF socket");
         close(sockfd);
         return -1;
     }
@@ -163,32 +174,14 @@ void* _pagingReceiverThread(void* arg) {
 
         printf("[gNodeB] Nhận kết nối từ %s:%d\n",
                inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        
+        /*
+            Thực hiện add task vào worker queue để xử lý paging message
+            tránh việc block thread chính khi chờ đợi SFN phù hợp để gửi paging đến UE
+        */
+        workerEnqueue(&worker_amf_receiver, (WorkerQueueItem_t)(intptr_t)client_sockfd);
 
-        /* Nhận paging message */
-        Paging_t paging_message;
-        ssize_t recv_len = recv(client_sockfd, &paging_message, sizeof(paging_message), 0);
-        if (recv_len < 0) {
-            perror("recv");
-            close(client_sockfd);
-            continue;
-        }
-
-        if (recv_len == sizeof(Paging_t) && paging_message.messageType == NGAP_PAGING_MESSAGE_TYPE) {
-            printf("[gNodeB] Nhận NGAP Paging: UE ID=%u, TAC=%u, CN Domain=%u\n",
-                   paging_message.ueId, paging_message.TAC, paging_message.cn_domain);
-
-            Paging_t *item = malloc(sizeof(*item));
-            if (item) {
-                *item = paging_message;
-                workerEnqueue(&worker, item);
-            }
-
-            /* response AMF */
-            const char* response = "Đã nhận paging message";
-            send(client_sockfd, response, strlen(response), 0);
-        }
-
-        close(client_sockfd);
+        
     }
     return NULL;
 }
@@ -216,4 +209,56 @@ void _pagingItemHandler(WorkerQueueItem_t raw) {
     }
 
     free(paging);
+}
+
+void _amfConnectionHandler(WorkerQueueItem_t raw) {
+    int32_t client_sockfd = (int32_t)(intptr_t)raw;
+    while (1) {
+        /* Kiểm tra nếu kết nối đã bị đóng */
+        char buffer[1];
+        ssize_t recv_result = recv(client_sockfd, buffer, sizeof(buffer), MSG_PEEK | MSG_DONTWAIT);
+        if (recv_result == 0) {
+            printf("[AMF Receiver] Kết nối đã bị đóng bởi client\n");
+            close(client_sockfd);
+            return;
+        } else if (recv_result < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
+            perror("recv");
+            close(client_sockfd);
+            return;
+        }
+
+        /* Nếu không có dữ liệu mới, tiếp tục chờ */
+        if (recv_result < 0) {
+            usleep(100000); // Sleep 100ms trước khi kiểm tra lại
+            continue;
+        }
+
+        /* Nhận paging message từ AMF */
+        Paging_t paging;
+        ssize_t bytes_received = recv(client_sockfd, &paging, sizeof(paging), 0);
+        if (bytes_received < 0) {
+            perror("recv");
+            close(client_sockfd);
+            return;
+        }
+
+        if (bytes_received == sizeof(Paging_t) && paging.messageType == NGAP_PAGING_MESSAGE_TYPE) {
+            printf("[gNodeB] Nhận NGAP Paging: UE ID=%u, TAC=%u, CN Domain=%u\n",
+                   paging.ueId, paging.TAC, paging.cn_domain);
+
+            Paging_t *item = malloc(sizeof(*item));
+            if (item) {
+                *item = paging;
+                workerEnqueue(&worker_send_paging, (WorkerQueueItem_t)item);
+            }
+
+            /* response AMF */
+            const char* response = "Đã nhận paging message";
+            send(client_sockfd, response, strlen(response), 0);
+        } else {
+            printf("[gNodeB] Nhận dữ liệu không hợp lệ từ AMF\n");
+            const char* response = "Dữ liệu không hợp lệ";
+            send(client_sockfd, response, strlen(response), 0);
+        }
+    }
 }

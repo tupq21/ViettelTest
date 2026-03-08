@@ -3,8 +3,6 @@
 
 #include <stdint.h>
 
-#define MESSAGE_MIB_ID                  0x01
-
 #define GNODEB_UDP_PORT                 5000
 #define GNODEB_TCP_PORT                 6000
 
@@ -27,7 +25,7 @@
 #define PF_PER_CYCLE                    1
 
 /* Thread pool configuration */
-#define NUM_WORKER_THREADS              4
+#define NUM_WORKER_THREADS              8
 #define PAGING_QUEUE_SIZE               100
 
 /* generic worker queue size; paging uses same default */
@@ -38,6 +36,7 @@
 /*
     Bản tin MIB struct
 */
+#define MESSAGE_MIB_ID                  0x01
 typedef struct {
     uint8_t  messageId;
     uint16_t sfnValue;

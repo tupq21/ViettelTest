@@ -1,14 +1,59 @@
-USE GUIDE
+# ViettelTest - 5G Network Simulation
 
-Step 1: Build
-    mkdir build && cd build && cmake .. && make
+Dự án mô phỏng mạng 5G cơ bản với các thành phần: AMF (Access and Mobility Management Function), gNodeB (Next Generation Node B), và UE (User Equipment). Sử dụng C để implement các chức năng paging, MIB broadcast, và đồng bộ SFN.
 
-Step 2: Run
-    Create 3 terminal an run as follow
-  + Terminal 1: cd build && ./gnodeb
-        Thực hiện chạy server của gnodeb, broadcast MIB và sẵn sàng nhận Paging request từ AMF
-  + Terminal 2: cd build && ./ue
-        Thực hiện khởi động UE, đồng bộ MIB với gNodeB và giả lập wakeup để nhận Paging theo thời gian
-  + Terminal 3: cd build && ./amf
-        Thực hiện giả lập quá trình gửi gói tin NgAP cho gNodeB với thông tin UE default (định nghĩa ở trong common.h)
+## Yêu cầu hệ thống
+
+- CMake
+- GCC hoặc compiler C tương thích
+- Linux
+
+## Build
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+
+## Chạy
+
+Mở 3 terminal riêng biệt và chạy theo thứ tự sau:
+
+### Terminal 1: gNodeB
+```bash
+cd build
+./gnodeb
+```
+Khởi động gNodeB server: broadcast MIB và lắng nghe paging request từ AMF qua TCP.
+
+### Terminal 2: UE
+```bash
+cd build
+./ue
+```
+Khởi động UE: đồng bộ MIB với gNodeB và giả lập DRX wakeup để nhận paging.
+
+### Terminal 3: AMF
+```bash
+cd build
+./amf
+```
+Giả lập AMF: gửi paging message đến gNodeB cho UE.
+
+## Kiến trúc
+
+- **AMF**: Gửi paging qua TCP đến gNodeB.
+- **gNodeB**: Nhận paging, gửi RRC paging, MIB qua UDP đến UE.
+- **UE**: Nhận MIB để sync SFN, wakeup theo DRX để nhận paging.
+
+## Cấu hình
+
+Các tham số như port, cycle, UE ID được định nghĩa trong `include/config/common.h`.
+
+## Lưu ý
+
+- Vì gNodeB là server host TCP, nên AMF chạy sau gNodeB.
+- Sử dụng Ctrl+C để dừng các process.
 

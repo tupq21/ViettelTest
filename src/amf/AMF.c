@@ -10,7 +10,7 @@
 
 static int32_t              gNodeB_sockfd = -1;
 static struct sockaddr_in   gNodeB_addr;
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE         1024
 
 static int32_t _initGNodeBAddress();
 

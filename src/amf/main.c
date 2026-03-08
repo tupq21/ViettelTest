@@ -11,6 +11,7 @@ int main() {
     }
 
     while (1) {
+        printf("========================");
         printf("\n--- AMF Simulator ---\n");
         printf("1. Send Paging Message (UE ID: %d)\n", UE_ID_DEFAULT);
         printf("0. Exit\n");
@@ -32,6 +33,7 @@ int main() {
 }
 
 static void _handleSendPagingMessage() {
+    printf("========================\n");
     printf("Choose CNDomain type:\n");
     printf("1. Normal Call\n");
     printf("2. Data App Call\n");

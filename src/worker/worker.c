@@ -70,6 +70,7 @@ static void _cleanup_mutex_unlock(void *mutex) {
 
 static int32_t _dequeueWorkerMessage(WorkerQueue_t* queue, WorkerQueueItem_t* item) {
     pthread_mutex_lock(&queue->mutex);
+    // tránh deadlock do thread bị cancel khi đang giữ mutex
     pthread_cleanup_push(_cleanup_mutex_unlock, &queue->mutex);
 
     while (queue->count == 0) {
